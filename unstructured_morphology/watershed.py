@@ -15,7 +15,7 @@ def unstructured_watershed(
     *coords,
     markers: np.ndarray[int] = None,
     mask: np.ndarray[bool] = None,
-    dxy: float = None,
+    dxy: float = 1,
     connectivity: int = 1
 ) -> np.ndarray[np.int32]:
     """Perform watershed segmentation on unstructured data. Aims to emulate the

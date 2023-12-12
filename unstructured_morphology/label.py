@@ -8,7 +8,7 @@ from sklearn.neighbors import NearestNeighbors
 
 
 def unstructured_label(
-    mask: np.ndarray[bool], *coords, dxy: float = None, connectivity: int = 1
+    mask: np.ndarray[bool], *coords, dxy: float = 1, connectivity: int = 1
 ) -> np.ndarray[np.int32]:
     """Calculate connected labels from unstructured data. Aims to emulate the
     behaviour of scipy.ndimage.label when used with a regular grid.
