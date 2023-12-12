@@ -63,7 +63,9 @@ def unstructured_watershed(
     nn_radius = dxy * connectivity**0.5 if dxy is not None else None
     nn = NearestNeighbors(radius=nn_radius, algorithm="ball_tree", metric="euclidean")
     nn = nn.fit(coord_stack)
-    distances, neighbours = nn.radius_neighbors(radius=nn_radius)
+    distances, neighbours = nn.radius_neighbors(
+        radius=nn_radius
+    )  # This could be moved to the loop below to reduce memory usage
 
     start_nodes = []
     end_nodes = []
@@ -96,7 +98,7 @@ def unstructured_watershed(
                     end_nodes.append(n[wh_min])
                     weights.append(-diffs[wh_min] + 1e8)
 
-    # Hand plateau nodes: we need to find the shortest path to a lower value, non-plateau point
+    # Handle plateau nodes: we need to find the shortest path to a lower value, non-plateau point
     if len(plateau_start_nodes):
         unique_nodes, node_index, plateau_nodes = np.unique(
             plateau_start_nodes + plateau_end_nodes,
@@ -176,6 +178,7 @@ def unstructured_watershed(
                 ):
                     if len(n):
                         neighbour_labels = output[mask][n]
+                        # Only add connections where the neighbouring label is > and not a marker to avoid duplicates
                         wh_diff_label = np.where(
                             (neighbour_labels > label)
                             & (neighbour_labels >= label_offset)
@@ -202,17 +205,23 @@ def unstructured_watershed(
                 .reset_index()
                 .sort_values(["max_val", "min_val", "start", "end"])
             )
+
+            # Save original labels as keys for remapping
             keys = np.concatenate([reduced_df.start, reduced_df.end])
 
+            # Loop over connections, starting from the lowest, and merge labels
             for i in reduced_df.index:
                 start = reduced_df.loc[i, "start"]
                 end = reduced_df.loc[i, "end"]
                 if start < end >= label_offset:
                     reduced_df.loc[reduced_df["start"] == end, "start"] = start
                     reduced_df.loc[reduced_df["end"] == end, "end"] = start
-                if end < start >= label_offset:
+                # After merging some end labels will be < start, so need to check for this
+                elif end < start >= label_offset:
                     reduced_df.loc[reduced_df["start"] == start, "start"] = end
                     reduced_df.loc[reduced_df["end"] == start, "end"] = end
+
+            # Create mapping from orginal regions to merged regions
             values = np.concatenate([reduced_df.start, reduced_df.end])
             wh_map = values < keys
             region_mapper = dict(zip(keys[wh_map], values[wh_map]))
@@ -223,6 +232,5 @@ def unstructured_watershed(
             output = label_map[output]
             # Clean up any remaining minima labels
             if output.max() >= label_offset:
-                # Clean up any remaining minima labels
                 output[output >= label_offset] = 0
     return output
