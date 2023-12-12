@@ -1,5 +1,5 @@
 """
-Labelling operation on unstructured grids.
+Labelling operation on unstructured data
 """
 
 import numpy as np
@@ -10,7 +10,8 @@ from sklearn.neighbors import NearestNeighbors
 def unstructured_label(
     mask: np.ndarray[bool], *coords, dxy: float = None, connectivity: int = 1
 ) -> np.ndarray[np.int32]:
-    """Calculate connected labels from unstructured data. 
+    """Calculate connected labels from unstructured data. Aims to emulate the
+    behaviour of scipy.ndimage.label when used with a regular grid.
 
     Parameters
     ----------
@@ -21,7 +22,7 @@ def unstructured_label(
     dxy : float, optional
         search radius within which neighbours are found, by default None
     connectivity : int, optional
-        emulates the connectivity of scipy.ndimage.label. Increses the search 
+        emulates the connectivity of scipy.ndimage.label. Increses the search
         radius by sqrt(connectivity), by default 1
 
     Returns
@@ -33,10 +34,7 @@ def unstructured_label(
     nn = nn.fit(np.stack([c[mask] for c in coords], -1))
     nn_radius = dxy * connectivity**0.5 if dxy is not None else None
     labels = (
-        csgraph.connected_components(
-            nn.radius_neighbors_graph(radius=nn_radius)
-        )[1]
-        + 1
+        csgraph.connected_components(nn.radius_neighbors_graph(radius=nn_radius))[1] + 1
     )
 
     output = np.zeros(mask.shape, dtype=np.int32)
