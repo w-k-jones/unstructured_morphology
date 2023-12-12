@@ -50,7 +50,7 @@ def unstructured_watershed(
     coord_stack
     # Create mask if not provided
     if markers is None:
-        markers = np.zeros(image.shape, dtype=np.int32)
+        # markers = np.zeros(image.shape, dtype=np.int32)
         label_offset = 1
     else:
         label_offset = np.max(markers) + 1
@@ -76,7 +76,7 @@ def unstructured_watershed(
 
     # Loop over nodes and assign neighbours to relevant lists
     for i, (d, n) in enumerate(zip(distances, neighbours)):
-        if len(n) and markers[mask][i] == 0:
+        if len(n) and (markers is None or markers[mask][i] == 0):
             diffs = (image[mask][n] - image[mask][i]) / d
             diffs
             min_diffs = np.nanmin(diffs)
