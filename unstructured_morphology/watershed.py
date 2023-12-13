@@ -8,6 +8,29 @@ from scipy import ndimage as ndi
 from scipy import sparse
 from scipy.sparse import csgraph
 from sklearn.neighbors import NearestNeighbors
+from numba import njit
+
+
+@njit()
+def find_neighbour_nodes(i, n, d, image, markers, mask):
+    if markers[mask][i] == 0:
+        if len(n) > 1:
+            diffs = (image[mask][n] - image[mask][i]) / d
+            wh_min = np.argmin(diffs)
+            min_diffs = diffs[wh_min]
+            if min_diffs < 0:
+                return np.array([n[wh_min]])
+            if min_diffs == 0:
+                # Check for plateaus
+                wh_zero_diff = diffs == 0
+                n_zeros = np.count_nonzero(wh_zero_diff)
+                if n_zeros > 1:
+                    return n[wh_zero_diff]
+                return np.array([n[wh_min]])
+        elif len(n) == 1 and image[mask][n[0]] <= image[mask][i]:
+            return n[0:]
+
+    return np.array([-1], dtype=np.int64)
 
 
 def unstructured_watershed(
@@ -50,7 +73,7 @@ def unstructured_watershed(
     coord_stack
     # Create mask if not provided
     if markers is None:
-        # markers = np.zeros(image.shape, dtype=np.int32)
+        markers = np.zeros(image.shape, dtype=np.int32)
         label_offset = 1
     else:
         label_offset = np.max(markers) + 1
@@ -67,36 +90,33 @@ def unstructured_watershed(
         radius=nn_radius
     )  # This could be moved to the loop below to reduce memory usage
 
-    start_nodes = []
-    end_nodes = []
-    weights = []
+    # preallocate
+    start_nodes = np.empty(distances.size, dtype=np.int32)
+    end_nodes = np.empty(distances.size, dtype=np.int32)
+    # weights = np.empty(distances.size, dtype=np.float32)
 
     plateau_start_nodes = []
     plateau_end_nodes = []
 
-    # Loop over nodes and assign neighbours to relevant lists
+    # Loop over nodes and assign neighbours to relevant lists - this is by far the slowest part of the process, need to speed up somehow
+    insert_loc = 0
     for i, (d, n) in enumerate(zip(distances, neighbours)):
-        if len(n) and (markers is None or markers[mask][i] == 0):
-            diffs = (image[mask][n] - image[mask][i]) / d
-            diffs
-            min_diffs = np.nanmin(diffs)
-            if min_diffs < 0:
-                start_nodes.append(i)
-                wh_min = np.nanargmin(diffs)
-                end_nodes.append(n[wh_min])
-                weights.append(-diffs[wh_min] + 1e8)
-            elif min_diffs == 0:
-                # Check for plateaus
-                wh_zero_diff = np.where(diffs == 0)[0]
-                n_zeros = len(wh_zero_diff)
-                if n_zeros > 1:
-                    plateau_start_nodes.extend([i] * n_zeros)
-                    plateau_end_nodes.extend(n[wh_zero_diff])
-                else:
-                    start_nodes.append(i)
-                    wh_min = np.nanargmin(diffs)
-                    end_nodes.append(n[wh_min])
-                    weights.append(-diffs[wh_min] + 1e8)
+        neighbour_info = find_neighbour_nodes(
+            i, n, d, image.ravel(), markers.ravel(), mask.ravel()
+        )
+        if len(neighbour_info) == 1 and neighbour_info[0] > 0:
+            start_nodes[insert_loc], end_nodes[insert_loc] = (
+                i,
+                neighbour_info[0],
+            )
+            insert_loc += 1
+        elif len(neighbour_info) == 2:
+            plateau_start_nodes.extend([i] * neighbour_info.size)
+            plateau_end_nodes.extend(neighbour_info)
+
+    start_nodes = start_nodes[:insert_loc]
+    end_nodes = end_nodes[:insert_loc]
+    # weights = weights[:insert_loc]
 
     # Handle plateau nodes: we need to find the shortest path to a lower value, non-plateau point
     if len(plateau_start_nodes):
@@ -126,25 +146,39 @@ def unstructured_watershed(
             new_plateau_end_node = unique_nodes[
                 isnt_plateau[np.nanargmin(shortest_paths[wh_path], axis=1)]
             ]
-            new_plateau_weights = (
-                image[mask][new_plateau_start_node] - image[mask][new_plateau_end_node]
-            )
+            # new_plateau_weights = (
+            #     image[mask][new_plateau_start_node] - image[mask][new_plateau_end_node]
+            # )
 
-            start_nodes.extend(new_plateau_start_node)
-            end_nodes.extend(new_plateau_end_node)
-            weights.extend(new_plateau_weights)
+        else:
+            new_plateau_start_node = []
+            new_plateau_end_node = []
+            # new_plateau_weights = []
 
         if np.any(~wh_path):
             wh_minima_plateau = np.isin(
                 plateau_start_nodes, unique_nodes[is_plateau[~wh_path]]
             )
-            start_nodes.extend(np.array(plateau_start_nodes)[wh_minima_plateau])
-            end_nodes.extend(np.array(plateau_end_nodes)[wh_minima_plateau])
-            weights.extend(np.full(np.sum(wh_minima_plateau), 1e8))
+            minima_plateau_start_node = np.array(plateau_start_nodes)[wh_minima_plateau]
+            minima_plateau_end_node = np.array(plateau_end_nodes)[wh_minima_plateau]
+            # minima_plateau_weights = np.full(np.sum(wh_minima_plateau), 1e8)
+        else:
+            minima_plateau_start_node = []
+            minima_plateau_end_node = []
+            # minima_plateau_weights = []
+
+        start_nodes = np.concatenate(
+            [start_nodes, new_plateau_start_node, minima_plateau_start_node]
+        )
+        end_nodes = np.concatenate(
+            [end_nodes, new_plateau_end_node, minima_plateau_end_node]
+        )
+        # weights = np.concatenate([weights, new_plateau_weights, minima_plateau_weights])
 
     # Build graph and find connected components
     graph = sparse.coo_matrix(
-        (weights, (start_nodes, end_nodes)), shape=(n_locs, n_locs)
+        (np.ones(len(start_nodes), dtype=np.float32), (start_nodes, end_nodes)),
+        shape=(n_locs, n_locs),
     ).tocsr()
 
     output = np.zeros(image.shape, dtype=np.int32)
