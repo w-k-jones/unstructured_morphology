@@ -127,3 +127,28 @@ def test_complex_two_markers():
             mask=mask
         )
     )
+
+
+def test_plateau():
+    # Test segmentation of plateaus
+    test_arr = -np.array(
+        [
+            [0, 0.5, 1, 1, 1, 3, 0],
+            [0, 1, 1, 1, 1, 1, 0],
+            [0, 1, 1, 1, 1, 1, 0],
+            [0, 1, 1, 1, 1, 1, 0],
+            [0, 2, 1, 1, 1, 0.5, 0],
+        ],
+        dtype=float,
+    )
+
+    mask = test_arr != 0
+
+    assert np.all(
+        watershed(test_arr, mask=mask)
+        == unstructured_watershed(
+            test_arr,
+            *np.meshgrid(*[range(s) for s in test_arr.shape], indexing="ij"),
+            mask=mask
+        )
+    )
