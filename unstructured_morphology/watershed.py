@@ -2,6 +2,7 @@
 Watershed segmentation on unstructured data
 """
 
+from collections import defaultdict
 from operator import itemgetter
 import numpy as np
 from scipy import ndimage as ndi
@@ -67,6 +68,7 @@ def unstructured_watershed(
     nn_radius = dxy * connectivity**0.5 if dxy is not None else None
     nn = NearestNeighbors(radius=nn_radius, algorithm="ball_tree", metric="euclidean")
     nn = nn.fit(coord_stack)
+
     distances, neighbours = nn.radius_neighbors(
         radius=nn_radius
     )  # About 25% of time taken
@@ -157,15 +159,13 @@ def process_neighbours(masked_image, masked_markers, neighbours, distances):
         neighbour_info = find_neighbour_nodes(
             i, neighbours[i], distances[i], masked_image, masked_markers
         )
-        if len(neighbour_info) == 1 and neighbour_info[0] >= 0:
-            start_nodes[insert_loc], end_nodes[insert_loc] = (
-                i,
-                neighbour_info[0],
-            )
-            insert_loc += 1
-        elif len(neighbour_info) > 1:
+        if len(neighbour_info) > 1:
             plateau_start_nodes.extend([i] * neighbour_info.size)
             plateau_end_nodes.extend(neighbour_info)
+        elif neighbour_info[0] >= 0:
+            start_nodes[insert_loc] = i
+            end_nodes[insert_loc] = neighbour_info
+            insert_loc += 1
 
     start_nodes = start_nodes[:insert_loc]
     end_nodes = end_nodes[:insert_loc]
@@ -255,7 +255,7 @@ def merge_regions(masked_output, masked_image, neighbours, label_offset):
                     try:
                         if new_max < region_edge_info[key][0]:
                             region_edge_info[key] = (new_max, new_min)
-                        elif new_max == region_edge_info[key][1]:
+                        elif new_max == region_edge_info[key][0]:
                             if new_min < region_edge_info[key][1]:
                                 region_edge_info[key] = (new_max, new_min)
                     except KeyError:
@@ -265,14 +265,21 @@ def merge_regions(masked_output, masked_image, neighbours, label_offset):
     label_map = np.zeros(np.max(unique_labels) + 1, dtype=np.int32)
     label_map[unique_labels] = unique_labels
 
+    relocated_labels = defaultdict(list)
+
     # Loop over connections, starting from the lowest, and merge labels
     for (start, end), _ in sorted(region_edge_info.items(), key=itemgetter(1)):
-        mapped_start, mapped_end = label_map[start], label_map[end]
+        mapped_start = label_map[start]
+        mapped_end = label_map[end]
         if mapped_start < mapped_end >= label_offset:
-            label_map[label_map == mapped_end] = mapped_start
+            relabel_locs = [mapped_end] + relocated_labels[mapped_end]
+            label_map[relabel_locs] = mapped_start
+            relocated_labels[mapped_start] += relabel_locs
         # After merging some end labels will be < start, so need to check for this
         elif mapped_end < mapped_start >= label_offset:
-            label_map[label_map == mapped_start] = mapped_end
+            relabel_locs = [mapped_start] + relocated_labels[mapped_start]
+            label_map[relabel_locs] = mapped_end
+            relocated_labels[mapped_end] += relabel_locs
 
     masked_output = label_map[masked_output]
     # Clean up any remaining minima labels
