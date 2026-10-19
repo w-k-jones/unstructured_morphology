@@ -116,7 +116,7 @@ def unstructured_watershed(
                 masked_output, masked_image, neighbours, label_offset
             )  # About 40% of time taken
 
-    output = np.zeros(image.shape, dtype=np.int32)
+    output = markers.copy()
     output[mask] = masked_output
 
     return output
@@ -238,28 +238,21 @@ def merge_regions(masked_output, masked_image, neighbours, label_offset):
 
     for label, value, n in zip(masked_output, masked_image, neighbours):
         if label and len(n):
-            neighbour_labels = masked_output[n]
-            neighbour_values = masked_image[n]
             # This loop makes up the main time cost, should look into optimising
-            for j in range(len(n)):
+            for neighbour_label, neighbour_value in zip(masked_output[n], masked_image[n]):
                 # Only add connections where the neighbouring label is > and not a marker to avoid duplicates
-                if label < neighbour_labels[j] >= label_offset:
-                    key = (label, neighbour_labels[j])
-                    neighbour_value = neighbour_values[j]
-                    new_min, new_max = (
+                if label < neighbour_label >= label_offset:
+                    key = (label, neighbour_label)
+                    max_min = (
                         (value, neighbour_value)
-                        if value <= neighbour_value
+                        if value > neighbour_value
                         else (neighbour_value, value)
                     )
                     # If new_max, new_min is less than existing value, replace
                     try:
-                        if new_max < region_edge_info[key][0]:
-                            region_edge_info[key] = (new_max, new_min)
-                        elif new_max == region_edge_info[key][0]:
-                            if new_min < region_edge_info[key][1]:
-                                region_edge_info[key] = (new_max, new_min)
+                        region_edge_info[key] = min(region_edge_info[key], max_min)
                     except KeyError:
-                        region_edge_info[key] = (new_max, new_min)
+                        region_edge_info[key] = max_min
 
     # Create remapping array for labels
     label_map = np.zeros(np.max(unique_labels) + 1, dtype=np.int32)
