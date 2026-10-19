@@ -3,7 +3,8 @@ Labelling operation on unstructured data
 """
 
 import numpy as np
-from scipy.sparse import csgraph
+import uxarray
+from scipy.sparse import csgraph, coo_array
 from sklearn.neighbors import NearestNeighbors
 
 
@@ -39,5 +40,39 @@ def unstructured_label(
 
     output = np.zeros(mask.shape, dtype=np.int32)
     output[mask] = labels
+
+    return output
+
+
+def uxarray_label(mask: uxarray.UxDataArray[bool]) -> uxarray.UxDataArray[int]:
+    """Calculate connected labels from uxarray unstructured grid data. Aims 
+    to emulte the behaviour of scipy.ndimage.label
+
+    Parameters
+    ----------
+    mask : uxarray.UxDataArray[bool]
+        UXArray dataarray with grid information, where True values represent 
+        the regions to be connected into labels.
+
+    Returns
+    -------
+    uxarray.UxDataArray[int]
+        UXArray dataarray of labelled regions
+    
+    """
+    neighbours = mask.uxgrid.face_face_connectivity[mask.values].values
+    origins = np.repeat(mask.n_face.values[mask.values], neighbours.shape[1])
+    wh_valid = np.isin(neighbours.ravel(), origins)
+    neighbours = neighbours.ravel()[wh_valid]
+    origins = origins[wh_valid]
+    data = np.ones(origins.size)
+
+    neighbours_graph = coo_array(
+        (data, [origins, neighbours.ravel()]), (mask.n_face.size, mask.n_face.size)
+    )
+    labels = csgraph.connected_components(neighbours_graph)[1]
+
+    output = mask.copy(data=np.zeros(mask.shape, dtype=np.int32))
+    output[mask.values] = np.unique(labels[mask.values], return_inverse=True)[1] + 1
 
     return output
